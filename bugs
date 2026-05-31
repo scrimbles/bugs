@@ -1,0 +1,38 @@
+#!/usr/bin/env rc
+# bugs — launch acme with emacs-style keybinding interception
+#
+# Wraps acme by setting DEVDRAW to the ddproxy filter, which
+# intercepts keyboard runes and translates emacs control characters:
+#   C-b/C-f  left/right (rune translation)
+#   C-n/C-p  down/up (9P cursor movement)
+#   C-a/C-e  already native in acme
+
+dir=`{cd `{dirname $0} && pwd}
+
+plan9=$PLAN9
+if(~ $plan9 '')
+	plan9=/Users/scrimbles/Development/plan9port
+p=$plan9/bin/9p
+DEVDRAW=$dir/ddproxy
+
+rm -f /tmp/acme-focus
+
+# Start acme
+$plan9/bin/acme $* &
+acme_pid=$apid
+
+# Wait for acme's 9P service
+while(! $p read acme/index >/dev/null >[2=1]){
+	sleep 0.1
+	# Bail if acme died
+	if(! kill -0 $acme_pid >[2]/dev/null)
+		exit 1
+}
+
+# Focus tracker: reads acme/log, writes focused window ID to file
+$p read acme/log >[2]/dev/null | awk '$2 == "focus" { printf "%s", $1 > "/tmp/acme-focus"; close("/tmp/acme-focus") }' &
+tracker_pid=$apid
+
+wait $acme_pid
+kill $tracker_pid >[2]/dev/null
+rm -f /tmp/acme-focus

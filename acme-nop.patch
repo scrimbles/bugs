@@ -1,0 +1,13 @@
+--- a/src/cmd/acme/rows.c
++++ b/src/cmd/acme/rows.c
+@@ -271,8 +271,8 @@
+ 	Window *w;
+ 	Text *t;
+
+-	if(r == 0)
+-		r = Runeerror;
++	if(r == 0)	/* NUL: no-op rune for external input proxies */
++		return nil;
+
+ 	clearmouse();
+ 	qlock(&row->lk);

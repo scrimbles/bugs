@@ -1,0 +1,31 @@
+#!/usr/bin/env rc
+# bugs-mount — mount acme's 9P filesystem via FUSE (macOS/Linux)
+#
+# On Plan 9, acme's files are already at /mnt/acme.
+# On plan9port, this script mounts them via 9pfuse.
+# Run this after acme is started.
+#
+# Requires macFUSE on macOS: https://osxfuse.github.io
+
+plan9=$PLAN9
+if(~ $plan9 '')
+	plan9=/Users/scrimbles/Development/plan9port
+
+mnt=$home/mnt/acme
+
+if(test -d $mnt){
+	if(test -f $mnt/index){
+		echo 'already mounted at '$mnt >[1=2]
+		exit ''
+	}
+}
+if not
+	mkdir -p $mnt
+
+if($plan9/bin/9pfuse `{$plan9/bin/namespace}^/acme $mnt)
+	echo 'mounted acme at '$mnt
+if not{
+	echo 'mount failed — is macFUSE installed?' >[1=2]
+	echo 'https://osxfuse.github.io' >[1=2]
+	exit 'mount failed'
+}

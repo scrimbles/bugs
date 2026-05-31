@@ -1,0 +1,24 @@
+#!/usr/bin/env rc
+# patch-acme — apply the NUL no-op rune patch to plan9port acme
+#
+# Makes rune 0 (NUL) a no-op in acme's keyboard handler, so the
+# devdraw proxy can unblock acme's keyboard thread without any
+# side effects.
+
+plan9=$PLAN9
+if(~ $plan9 '')
+	plan9=/Users/scrimbles/Development/plan9port
+
+dir=`{dirname $0}
+patch=$dir/acme-nop.patch
+
+if(git -C $plan9 apply --check $patch >[2]/dev/null)
+	git -C $plan9 apply $patch
+if not{
+	echo 'patch already applied or conflict — check '$plan9'/src/cmd/acme/rows.c' >[1=2]
+	exit 'patch failed'
+}
+echo 'patch applied.'
+echo ''
+echo 'rebuild acme:'
+echo '  cd '$plan9'/src/cmd/acme && mk install'

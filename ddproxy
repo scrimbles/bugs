@@ -1,0 +1,105 @@
+#!/usr/bin/env rc
+# ddproxy — devdraw proxy with keybinding interception
+#
+# Drop-in replacement for devdraw. Set DEVDRAW=path/to/ddproxy
+# before launching acme. Launches the real devdraw and pipes its
+# output through an SL filter that rewrites keyboard runes.
+#
+# The SL filter writes 9P commands to stderr for complex actions
+# (cursor movement). This script reads those and dispatches them
+# via the 9p command.
+#
+# stdin/stdout are connected to acme (the draw client).
+
+plan9=$PLAN9
+if(~ $plan9 '')
+	plan9=/Users/scrimbles/Development/plan9port
+real_dd=$REAL_DEVDRAW
+if(~ $real_dd '')
+	real_dd=$plan9/bin/devdraw
+p=$plan9/bin/9p
+sl=/Users/scrimbles/Development/sl/build/sl
+dir=`{cd `{dirname $0} && pwd}
+
+tmpdir=`{mktemp -d}
+mkfifo $tmpdir/to_dd
+mkfifo $tmpdir/cmds
+
+fn sigexit {
+	rm -rf $tmpdir
+}
+
+# move_cursor dir id — move cursor up/down one line preserving column
+# dir: +1 (down) or -1 (up)
+fn move_cursor {
+	dir=$1; id=$2
+	# Phase 1: get dot position and line start via rdwr.
+	# rdwr keeps the addr file open so it doesn't reset between operations.
+	phase1=`{{
+		echo addr=dot | $p write acme/$id/ctl >/dev/null >[2=1]
+		echo .
+		echo '.-0'
+	} | $p rdwr acme/$id/addr >[2]/dev/null}
+	if(~ $#phase1 0) return
+	# phase1 words: 0 0 q0 q1 bol0 bol1
+	q0=$phase1(3); bol0=$phase1(5)
+	col=`{expr $q0 - $bol0}
+	# Phase 2: get target line range via rdwr.
+	# When cursor is at col 0, +1 stays on the same line (acme lineaddr
+	# quirk: q1-1 is a newline). +#1+1 nudges past the newline first.
+	if(~ $dir +1){
+		if(~ $col 0)
+			addr_expr='+#1+1'
+		if not
+			addr_expr='+1'
+	}
+	if not
+		addr_expr='-1'
+	phase2=`{{
+		echo addr=dot | $p write acme/$id/ctl >/dev/null >[2=1]
+		echo $addr_expr
+	} | $p rdwr acme/$id/addr >[2]/dev/null}
+	if(~ $#phase2 0) return
+	# phase2 words: 0 0 tgt0 tgt1
+	tgt0=$phase2(3); tgt1=$phase2(4)
+	linelen=`{expr $tgt1 - $tgt0}
+	if(test $linelen -gt 0)
+		linelen=`{expr $linelen - 1}
+	if(test $col -gt $linelen)
+		col=$linelen
+	pos=`{expr $tgt0 + $col}
+	echo -n '#'^$pos | $p write acme/$id/addr >/dev/null >[2=1]
+	printf 'dot=addr\nshow\n' | $p write acme/$id/ctl >/dev/null >[2=1]
+}
+
+# 9P command dispatcher: reads commands from SL's stderr.
+# Each line is: op id [arg]
+{
+	while(fields=`{sed 1q}){
+		op=$fields(1); id=$fields(2); arg=$fields(3)
+		switch($op){
+		case C
+			echo $arg | $p write acme/$id/ctl >/dev/null >[2=1]
+		case A
+			echo -n $arg | $p write acme/$id/addr >/dev/null >[2=1]
+		case D
+			echo -n $arg | $p write acme/$id/data >/dev/null >[2=1]
+		case N
+			move_cursor +1 $id
+		case U
+			move_cursor -1 $id
+		}
+	}
+} <$tmpdir/cmds &
+dispatch_pid=$apid
+
+# Real devdraw reads from named pipe, its stdout is filtered through SL.
+# SL's stderr goes to the command dispatcher pipe.
+$real_dd $* <$tmpdir/to_dd | $sl $dir/ddproxy.sl >[2]$tmpdir/cmds &
+proxy_pid=$apid
+
+# Forward our stdin (from acme) to devdraw's stdin via named pipe
+cat >$tmpdir/to_dd
+
+wait $proxy_pid
+wait $dispatch_pid
